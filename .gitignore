@@ -1,0 +1,16 @@
+# Personal data, created at runtime. Never commit these.
+config.json
+log.csv
+history*.csv
+local_normal.json
+report.html
+*.log
+swiftbar-plugins/
+
+# macOS / Python
+.DS_Store
+__pycache__/
+*.pyc
+
+# Built zip for sharing (attach to a GitHub release instead)
+*.zip

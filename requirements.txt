@@ -1,0 +1,3 @@
+# Nothing to pip install: Headache Forecast uses only the Python 3.8+ standard library.
+# It also relies on macOS built-ins (curl, osascript, launchd) and SwiftBar
+# (https://swiftbar.app) for the menu bar, which install.command sets up.
