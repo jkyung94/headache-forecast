@@ -131,8 +131,8 @@ def count_list(counter, total, empty):
 
 def weather_rows(rows, pressure, enough, outcome):
     risky = lambda d: d in pressure and pressure[d]["level"] in ("MODERATE", "HIGH")
-    warm = lambda d: d in pressure and (pressure[d].get("t_delta") or 0) >= predict.TEMP_RISE
-    big = lambda d: d in pressure and pressure[d]["swing"] >= predict.BIG_RANGE
+    warm = lambda d: d in pressure and (pressure[d].get("t_delta") or 0) >= predict.temp_rise()
+    big = lambda d: d in pressure and pressure[d]["swing"] >= predict.big_range()
     # pressure[d] describes the change from d to d+1, so "the day of" is the day after.
     before = lambda r: risky(r["date"])
     of = lambda r: risky(r["date"] - timedelta(days=1))
@@ -141,10 +141,10 @@ def weather_rows(rows, pressure, enough, outcome):
     return (bar_row("Day before a pressure drop (alert day)", c(before), enough)
             + bar_row("Day of the lower pressure", c(of), enough)
             + bar_row("Either of those days", c(lambda r: before(r) or of(r)), enough)
-            + bar_row(f"Big range within the day ({predict.BIG_RANGE:.0f}+ hPa)", c(lambda r: big(r["date"])), enough)
+            + bar_row(f"Big range within the day ({predict.big_range():.0f}+ hPa, top 15% here)", c(lambda r: big(r["date"])), enough)
             + bar_row("Big range, pressure falling",
                       c(lambda r: big(r["date"]) and pressure[r["date"]]["falling"]), enough)
-            + bar_row(f"Day before a warm-up ({predict.TEMP_RISE:.0f}{unit}+ by next day)", c(lambda r: warm(r["date"])), enough)
+            + bar_row(f"Day before a warm-up ({predict.temp_rise():.0f}{unit}+ by next day, top 10% here)", c(lambda r: warm(r["date"])), enough)
             + bar_row("Day of the warm-up", c(lambda r: warm(r["date"] - timedelta(days=1))), enough))
 
 

@@ -67,14 +67,12 @@ BELOW_NORMAL = 6.0      # Okuma: 6+ hPa below 1013, which is ~normal in Japan.
                         # Applied here as 6 below the *local* normal instead, since
                         # northern Illinois averages ~1017 (1007 would be ~10 below).
 
-BIG_RANGE = 12.0        # in-day high-low range, hPa. Not research-backed: ~top 15% of
-                        # days in northern Illinois. Shown and tested in the report,
-                        # but doesn't drive alerts unless the log shows it matters.
-
-TEMP_RISE = 9.0 if TEMP_UNIT == "fahrenheit" else 5.0
-                        # daily-average warm-up by the next day. Mukamal et al. 2009
-                        # (Boston ER visits) linked headaches to rising temperature,
-                        # per 5°C. ~top 10% of days in northern Illinois. Info + report only.
+# "Unusual" for the ⚡ and 🌡 markers is measured per location from its past year,
+# since a big day in Chicago is ordinary in some places and rare in others. Neither
+# is research-backed as a threshold, so they're info + report only, never alerts.
+BIG_RANGE_PCT = 85      # ⚡: in-day high-low pressure range in the top 15% of days here
+TEMP_RISE_PCT = 90      # 🌡: day-to-day warm-up in the top 10% here. Mukamal et al. 2009
+                        # (Boston ER visits) linked headaches to rising temperature.
 
 MEDS_WARN = 8           # start warning before the first rebound limit
 MEDS_LIMIT_COMBO = 10   # triptans, Excedrin and other combination pills
@@ -82,7 +80,7 @@ MEDS_LIMIT_SIMPLE = 15  # Advil, Tylenol, aspirin
 
 HISTORY_FILE = os.path.join(HERE, "history.csv")
 LOG_FILE = os.path.join(HERE, "log.csv")
-NORMAL_FILE = os.path.join(HERE, "local_normal.json")
+CLIMATE_FILE = os.path.join(HERE, "local_climate.json")
 DIALOG_SCRIPT = os.path.join(HERE, "log_dialog.applescript")
 PREVENTIVE = CONFIG.get("preventive")        # optional, e.g. "Emgality"
 
@@ -138,32 +136,78 @@ def fetch_hourly(attempts=6):
     return times, data["pressure_msl"], data["temperature_2m"]
 
 
-def local_normal():
-    """Average sea-level pressure over the past year here, cached for 30 days."""
+_climate = None
+
+
+def percentile(values, pct):
+    vals = sorted(values)
+    return vals[min(len(vals) - 1, int(len(vals) * pct / 100))]
+
+
+def local_climate():
+    """What's normal and what's unusual here, from the past year. Cached for 30 days.
+
+    normal_hpa: average sea-level pressure (Okuma's level is 6 below this)
+    big_range:  in-day pressure range at the BIG_RANGE_PCT percentile, hPa
+    temp_rise:  day-to-day warm-up at the TEMP_RISE_PCT percentile, in TEMP_UNIT
+    """
+    global _climate
+    if _climate:
+        return _climate
+    cached = None
     try:
-        with open(NORMAL_FILE) as f:
+        with open(CLIMATE_FILE) as f:
             cached = json.load(f)
-        if (date.today() - date.fromisoformat(cached["computed"])).days < 30 \
-                and cached["lat"] == LAT and cached["lon"] == LON:
-            return cached["normal_hpa"]
+        if (date.today() - date.fromisoformat(cached["computed"])).days < 30 and \
+                (cached["lat"], cached["lon"], cached["temp_unit"]) == (LAT, LON, TEMP_UNIT):
+            _climate = cached
+            return _climate
     except (OSError, ValueError, KeyError):
-        cached = None
+        pass
 
     end = date.today() - timedelta(days=7)  # archive lags a few days
     url = (f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}"
            f"&start_date={end - timedelta(days=365)}&end_date={end}"
-           f"&daily=pressure_msl_mean&timezone={TZ.replace('/', '%2F')}")
-    r = subprocess.run(["/usr/bin/curl", "-sf", "--max-time", "30", url],
+           f"&hourly=pressure_msl,temperature_2m&temperature_unit={TEMP_UNIT}"
+           f"&timezone={TZ.replace('/', '%2F')}")
+    r = subprocess.run(["/usr/bin/curl", "-sf", "--max-time", "60", url],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        # Stale cache beats nothing; the standard atmosphere is the last resort.
-        return cached["normal_hpa"] if cached else 1013.25
-    vals = [v for v in json.loads(r.stdout)["daily"]["pressure_msl_mean"] if v is not None]
-    normal = round(sum(vals) / len(vals), 1)
-    with open(NORMAL_FILE, "w") as f:
-        json.dump({"normal_hpa": normal, "computed": date.today().isoformat(),
-                   "lat": LAT, "lon": LON}, f)
-    return normal
+        # Stale cache beats nothing; generic values are the last resort.
+        _climate = cached or {"normal_hpa": 1013.25, "big_range": 12.0,
+                              "temp_rise": 9.0 if TEMP_UNIT == "fahrenheit" else 5.0}
+        return _climate
+    h = json.loads(r.stdout)["hourly"]
+    pres, temp = defaultdict(list), defaultdict(list)
+    for t, p, tt in zip(h["time"], h["pressure_msl"], h["temperature_2m"]):
+        if p is not None:
+            pres[t[:10]].append(p)
+        if tt is not None:
+            temp[t[:10]].append(tt)
+    days = [d for d in sorted(pres) if len(pres[d]) >= 20]
+    tmean = {d: sum(v) / len(v) for d, v in temp.items() if len(v) >= 20}
+    rises = [tmean[b] - tmean[a] for a, b in zip(days, days[1:]) if a in tmean and b in tmean]
+    _climate = {
+        "normal_hpa": round(sum(sum(pres[d]) / len(pres[d]) for d in days) / len(days), 1),
+        "big_range": round(percentile([max(pres[d]) - min(pres[d]) for d in days], BIG_RANGE_PCT), 1),
+        "temp_rise": round(percentile(rises, TEMP_RISE_PCT), 1),
+        "computed": date.today().isoformat(), "lat": LAT, "lon": LON, "temp_unit": TEMP_UNIT,
+    }
+    with open(CLIMATE_FILE, "w") as f:
+        json.dump(_climate, f)
+    return _climate
+
+
+def local_normal():
+    return local_climate()["normal_hpa"]
+
+
+def big_range():
+    return local_climate()["big_range"]
+
+
+def temp_rise():
+    return local_climate()["temp_rise"]
 
 
 def daily_summary(times, pressure, low_level=None, temps=None):
@@ -385,8 +429,8 @@ def print_swiftbar(summary, pressure_now, temp_now):
         change = "" if i["delta"] is None else f"{i['delta']:+5.1f} by {nxt}"
         t = None if i.get("t_delta") is None else round(i["t_delta"])
         temp = "" if t is None else ("0°" if t == 0 else f"{t:+d}°")
-        flags = (" ⚡" if i["swing"] >= BIG_RANGE else "") + \
-                (" 🌡" if (i.get("t_delta") or 0) >= TEMP_RISE else "")
+        flags = (" ⚡" if i["swing"] >= big_range() else "") + \
+                (" 🌡" if (i.get("t_delta") or 0) >= temp_rise() else "")
         print(f"{ICON[i['level']]} {label:<9}  {i['avg']:6.1f}  {change:<15}  "
               f"{i['swing']:5.1f}  {temp:>5}{flags}"
               f"{'  ← today' if d == today else ''} | font=Menlo-Regular size=12")
@@ -395,8 +439,9 @@ def print_swiftbar(summary, pressure_now, temp_now):
           "(headaches tend to start the day before the low) | size=11 color=gray")
     print(f"🔴 = that drop, and it ends up unusually low ({low:.0f} or below; normal here is "
           f"{local_normal():.0f}) · ⚪ = forecast doesn't reach far enough | size=11 color=gray")
-    print(f"range = high−low within the day · temp = change by the next day, {DEG} · "
-          f"⚡🌡 = unusually big (info only) | size=11 color=gray")
+    print(f"range = high−low within the day · temp = change by the next day, {DEG} | size=11 color=gray")
+    print(f"⚡ = range {big_range():.0f}+ hPa · 🌡 = warms {temp_rise():.0f}{DEG}+ "
+          f"(each the top ~10–15% of days where you live; info only) | size=11 color=gray")
     print("---")
 
     py, script = sys.executable, os.path.abspath(__file__)

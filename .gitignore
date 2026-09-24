@@ -3,6 +3,7 @@ config.json
 log.csv
 history*.csv
 local_normal.json
+local_climate.json
 report.html
 *.log
 swiftbar-plugins/

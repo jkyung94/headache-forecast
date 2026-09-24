@@ -104,12 +104,18 @@ Tylenol. Preventive doses don't count.
 | `log.csv` | Your headache log. Opens in Numbers or Excel |
 | `history.csv` | What each nightly check predicted |
 | `config.json` | Location and preventive settings |
+| `local_climate.json` | Your location's normal pressure and "unusual" levels, refreshed monthly |
 | `report.html` | The latest pattern report |
 
 ## Limitations
 
-- The ⚡ (in-day range 12+ hPa) and 🌡 (warm-up of 9°F / 5°C+) markers were tuned on
-  northern Illinois weather. They're info only and don't drive alerts.
+- The ⚡ (big in-day pressure range) and 🌡 (big warm-up) markers are measured from
+  your own location's past year: the top ~15% and ~10% of days there. There's no
+  research threshold for either, so they're info only and don't drive alerts.
+- The 🟡 rule is a fixed 5 hPa daily drop, straight from the study, so alerts come
+  more often in stormy climates (e.g. the Midwest in winter) than in steady ones
+  (e.g. Florida, Southern California). `python3 backtest_thresholds.py` shows how
+  often they would have fired where you live over the past year.
 - Pressure is forecast at one point for your town. Forecasts more than 3–4 days out
   are rough.
 
